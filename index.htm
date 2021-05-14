@@ -1,0 +1,228 @@
+<!doctype html>
+
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+
+  <title>vif - entraînements</title>
+  <meta name="description" content="Entraînements à vélo en intérieur sur hometrainer.">
+  <meta name="author" content="Daniel MIHALCEA">
+
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    #HR{display: block;width:128px;height: 32px;background: #858585;}
+    #HR .value{display: inline;}
+    #HR img{display: inline;}
+    #HR canvas{width: 200px;height: 50px;}
+  </style>
+
+</head>
+
+<body>
+  <script src="js/scripts.js"></script>
+  <input type="button" onclick="requestHR();" value="HR">
+  <div id="HR"><div class="value">00</div>❤<img src="img/bat00.png" class="bat" width="24" height="16"></div>
+  <input type="button" onclick="requestPower();" value="PWR">
+  <div id="PWR"><div class="value">00</div><img src=""><img src="img/bat00.png" class="bat" width="24" height="16"></div>
+  <script>
+    var heartRateDevice;
+    var powerDevice;
+    var batInterval;
+    class heartRate { // fréquence cardiaque
+      #current; // fréquence actuelle
+      #average; // fréquence moyenne
+      #min;
+      #max;
+      #history; // historique des fréquences [fréquence, timestamp]
+      #startTime; // timecode du début d'activité
+
+      #hrt;
+      #tt;
+      #t1;
+      
+      constructor() { // constructeur
+        this.#current = 0;
+        this.#average = 0;
+        this.#min = 300;
+        this.#max = 0;
+        this.#history = [];
+        this.#startTime = Date.now();
+        this.#hrt = 0;
+        this.#tt = 0;
+        this.#t1 = 0;
+      }
+      getCurrent() {
+        return this.#current;
+      }
+      getAverage() { // calcul moyenne
+        this.#average = this.#hrt/this.#tt;
+        return this.#average
+      }
+      getHistory() {
+        return this.#history;
+      }
+      Add(heartRate) {
+        this.#current = heartRate;
+        if (heartRate > 20) {
+          let chrono = Date.now() - this.#startTime;
+          let diff = chrono-this.#t1;
+          this.#history.push([heartRate, chrono, diff]);
+          this.#hrt += heartRate*(diff);
+          this.#tt += diff;
+          this.#t1 = chrono;
+          if (heartRate > this.#max) this.#max = heartRate;
+          if (heartRate < this.#min) this.#min = heartRate;
+        }
+      }
+      
+    } // END class heartRate
+
+    class trackHeartRate {
+      hr = [];
+    }
+
+    class power { // puissance
+      #current; // fréquence actuelle
+      #average; // fréquence moyenne
+      #min;
+      #max;
+      #history; // historique des fréquences [fréquence, timestamp]
+      #startTime; // timecode du début d'activité
+
+      #hrt;
+      #tt;
+      #t1;
+      
+      constructor() { // constructeur
+        this.#current = 0;
+        this.#average = 0;
+        this.#min = 300;
+        this.#max = 0;
+        this.#history = [];
+        this.#startTime = Date.now();
+        this.#hrt = 0;
+        this.#tt = 0;
+        this.#t1 = 0;
+      }
+      getCurrent() {
+        return this.#current;
+      }
+      getAverage() { // calcul moyenne
+        this.#average = this.#hrt/this.#tt;
+        return this.#average
+      }
+      getHistory() {
+        return this.#history;
+      }
+      Add(power) {
+        this.#current = power;
+        if (power > 1) {
+          let chrono = Date.now() - this.#startTime;
+          let diff = chrono-this.#t1;
+          this.#history.push([power, chrono, diff]);
+          this.#hrt += power*(diff);
+          this.#tt += diff;
+          this.#t1 = chrono;
+          if (power > this.#max) this.#max = power;
+          if (power < this.#min) this.#min = power;
+        }
+      }
+    } // END class power
+    var HR;
+    var PWR;
+    function requestHR() {
+        navigator.bluetooth.requestDevice({ filters: [{ services: ['heart_rate'] }], optionalServices: ['battery_service'] })
+        .then(device => {
+          heartRateDevice = device;
+          heartRateDevice.addEventListener('gattserverdisconnected', onDisconnected);
+          return heartRateDevice.gatt.connect();
+        })
+        .then(server => server.getPrimaryService('heart_rate'))
+        .then(service => service.getCharacteristic('heart_rate_measurement'))
+        .then(characteristic => characteristic.startNotifications())
+        .then(characteristic => {
+          characteristic.addEventListener('characteristicvaluechanged',
+                                          handleCharacteristicValueChanged);
+                                          HR = new heartRate();
+                                          console.log('Notifications have been started.');
+                                          requestHRbat();
+                                          batInterval = setInterval(requestHRbat, 600000)
+        })
+        .catch(error => { console.error(error); });
+    }
+    function requestPower() {
+      navigator.bluetooth.requestDevice({ filters: [{ services: ['cycling_power'] }] })
+        .then(device => {
+          powerDevice = device;
+          return powerDevice.gatt.connect();
+        })
+        .then(server => server.getPrimaryService('cycling_power'))
+        .then(service => service.getCharacteristic('cycling_power_measurement'))
+        .then(characteristic => characteristic.startNotifications())
+        .then(characteristic => {
+          characteristic.addEventListener('characteristicvaluechanged',
+                                          handlePowerValueChanged);
+                                          PWR = new power();
+                                          console.log('Notifications have been started (pwr).');
+                                          // requestPWRbat();
+                                          // batInterval = setInterval(requestPWRbat, 600000)
+        })
+        .catch(error => { console.error(error); });
+    }
+    function onDisconnected() {
+      console.log("déco");
+    }
+    function requestHRbat() {
+        heartRateDevice.gatt.connect()
+        .then(server => server.getPrimaryService('battery_service'))
+        .then(service => service.getCharacteristic('battery_level'))
+        .then(characteristic => {return characteristic.readValue()})
+        .then(value => {
+            let bat = value.getUint8(0);
+            let i = "00";
+            if (bat > 87.5) i = "100";
+            else if (bat > 62.5) i = "75";
+            else if (bat > 37.5) i = "50";
+            else if (bat > 12.5) i = "25";
+            document.getElementById("HR").getElementsByClassName("bat")[0].src="img/bat"+i+".png";
+            document.getElementById("HR").getElementsByClassName("bat")[0].title=bat+"%";
+            console.log(`Battery percentage is ${bat}`);
+        })
+        .catch(error => {
+          document.getElementById("HR").getElementsByClassName("bat")[0].src="img/0.png";
+          document.getElementById("HR").getElementsByClassName("bat")[0].title="";
+          console.log(error);
+        })
+    }
+
+      function handleCharacteristicValueChanged(event) {
+        let value = event.target.value;
+        value = value.buffer ? value : new DataView(value);
+        let flags = value.getUint8(0);
+        let rate16Bits = flags & 0x1;
+        let heartRate = 0;
+        if (rate16Bits) {
+          heartRate = value.getUint16(1, /*littleEndian=*/true);
+        } else {
+          heartRate = value.getUint8(1);
+        }
+        if (heartRate < 20) heartRate = 0;
+        HR.Add(heartRate);
+        document.getElementById("HR").getElementsByClassName("value")[0].innerHTML = heartRate + "(" + Math.round(HR.getAverage()) + ")";
+      }
+      var t;
+      function handlePowerValueChanged(event) {
+        let value = event.target.value;
+        // t = value; console.log(new Int16Array(t.buffer));
+        value = value.buffer ? value : new DataView(value);
+        let flags = value.getUint16(0, true);
+        let power = 0;
+        power = value.getInt16(2, /*littleEndian=*/true);
+        if (power < 1) power = 0;
+        PWR.Add(power);
+        document.getElementById("PWR").getElementsByClassName("value")[0].innerHTML = power + "(" + Math.round(PWR.getAverage()) + ")";
+      }
+      // 
+    </script>
+</body>
+</html>
